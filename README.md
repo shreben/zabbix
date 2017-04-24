@@ -1,6 +1,6 @@
 # Zabbix
 Repository contains the following branches:
-+ [basic]()
++ [basics]()
 + [tools]()
 + [web]()
 + [java]()
