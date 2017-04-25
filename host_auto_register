@@ -1,0 +1,214 @@
+#!/usr/bin/env python
+# -*- coding: utf8 -*-
+#
+#  Written by Siarhei Hreben
+#  DevOps Lab 2017
+#
+
+import requests
+import socket
+import os
+
+# Define required variables
+host_name = socket.gethostname()
+host_ip = (os.popen('ifconfig enp0s8 | grep -e "inet\s" | awk \'{print $2}\'')).read()
+host_group = 'CloudHosts'
+host_template = 'MTN Lab CloudHosts'
+server_url = 'http://zabbix-server.mtn.lab/api_jsonrpc.php'
+content_type = 'application/json-rpc'
+zabbix_user = 'Admin'
+zabbix_pass = 'zabbix'
+request_id = 0
+
+
+# define logout function
+def logout(url, r_id, token):
+    logout_request = {
+        "jsonrpc": "2.0",
+        "method": "user.logout",
+        "params": [],
+        "id": r_id,
+        "auth": token
+    }
+    request = requests.post(url, json=logout_request)
+    if request.json()['result']:
+        print 'Logged out.'
+    else:
+        print "Error while logging out: {}".format(request.json())
+
+# initial login
+request_id += 1
+auth_request = {
+    "jsonrpc": "2.0",
+    "method": "user.login",
+    "params": {
+        "user": zabbix_user,
+        "password": zabbix_pass,
+    },
+    "id": request_id
+}
+
+r = requests.post(server_url, json=auth_request)
+if 'error' in r.json().keys():
+    print "Error: {}".format(r.json()['error']['data'])
+    exit()
+else:
+    auth_token = r.json()['result']
+    print 'Logged in.'
+
+# check template
+request_id += 1
+get_host_template = {
+    "jsonrpc": "2.0",
+    "method": "template.get",
+    "params": {
+        "output": "extend",
+        "filter": {
+            "host": [
+                host_template
+            ]
+        }
+    },
+    "auth": auth_token,
+    "id": request_id
+}
+
+r = requests.post(server_url, json=get_host_template)
+if 'error' in r.json().keys():
+    print "Error: {}".format(r.json()['error']['data'])
+    logout(server_url, request_id, auth_token)
+    exit()
+else:
+    if len(r.json()['result']) > 0:
+        host_template_id = r.json()['result'][0]['templateid']
+        print "Template {} found on the server.".format(host_template)
+    else:
+        print "Template {} not found on the server. Exiting...".format(host_template)
+        logout(server_url, request_id, auth_token)
+        exit()
+
+# check if group exists
+request_id += 1
+get_group_request = {
+    "jsonrpc": "2.0",
+    "method": "hostgroup.get",
+    "params": {
+        "output": "extend",
+        "filter": {
+            "name": [
+                host_group
+            ]
+        }
+    },
+    "auth": auth_token,
+    "id": request_id
+}
+
+r = requests.post(server_url, json=get_group_request)
+if 'error' in r.json().keys():
+    print "Error: {}".format(r.json()['error']['data'])
+    logout(server_url, request_id, auth_token)
+    exit()
+else:
+    if len(r.json()['result']) == 0:
+        # Group is missing, registering
+        print "Group {} not found on the server. Creating...".format(host_group)
+        request_id += 1
+        create_group_request = {
+        "jsonrpc": "2.0",
+        "method": "hostgroup.create",
+        "params": {
+            "name": host_group
+        },
+        "auth": auth_token,
+        "id": request_id
+        }
+        r = requests.post(server_url, json=create_group_request)
+        if len(r.json()['result']['groupids']) > 0:
+            host_group_id = r.json()['result']['groupids'][0]
+            print "Group {} with id {} is successfully created.".format(host_group, host_group_id)
+        else:
+            print "Error while creating group {}: {}".format(host_group, r.json()['result'])
+    else:
+        # Group exists
+        host_group_id = r.json()['result'][0]['groupid']
+        print "Group {} exists.".format(host_group)
+
+# check if host exists
+request_id += 1
+get_host_request = {
+    "jsonrpc": "2.0",
+    "method": "host.get",
+    "params": {
+        "output": "extend",
+        "filter": {
+            "host": [
+                host_name
+            ]
+        }
+    },
+    "auth": auth_token,
+    "id": request_id
+}
+
+r = requests.post(server_url, json=get_host_request)
+if 'error' in r.json().keys():
+    print "Error: {}".format(r.json()['error']['data'])
+    logout(server_url, request_id, auth_token)
+    exit()
+else:
+    if len(r.json()['result']) == 0:
+        # Host is missing, registering
+        print "Host {} is not registered. Performing registration...".format(host_name)
+        request_id += 1
+        register_host_request = {
+            "jsonrpc": "2.0",
+            "method": "host.create",
+            "params": {
+                "host": host_name,
+                "interfaces": [
+                    {
+                        "type": 1,
+                        "main": 1,
+                        "useip": 1,
+                        "ip": host_ip,
+                        "dns": "",
+                        "port": "10050"
+                    }
+                ],
+                "groups": [
+                    {
+                        "groupid": host_group_id
+                    }
+                ],
+                "templates": [
+                    {
+                        "templateid": host_template_id
+                    }
+                ],
+                "inventory_mode": 0,
+            },
+            "auth": auth_token,
+            "id": request_id
+        }
+        r = requests.post(server_url, json=register_host_request)
+        if 'error' in r.json().keys():
+            print "Error: {}".format(r.json()['error']['data'])
+            logout(server_url, request_id, auth_token)
+            exit()
+        else:
+            if len(r.json()['result']['hostids']) > 0:
+                print "Host {} is successfully created.".format(host_name)
+            else:
+                print "Error while creating host {}: {}".format(host_name, r.json()['result'])
+    else:
+        print "Host {} exists.".format(host_name)
+
+# all is done, logout
+logout(server_url, request_id, auth_token)
+
+
+
+
+
+
