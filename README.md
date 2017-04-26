@@ -44,7 +44,9 @@ Registering Script requirements:
     SHELL
   end
 ```
+
 2. [Host registration script](https://github.com/shreben/zabbix/blob/api/host_auto_register):
+
 ```python
 #!/usr/bin/env python
 # -*- coding: utf8 -*-
